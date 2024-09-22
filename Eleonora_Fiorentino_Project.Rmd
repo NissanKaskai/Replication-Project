@@ -1,0 +1,509 @@
+---
+title: "Replication Project"
+author: "Eleonora Fiorentino"
+date: "2024-02-07"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: "readable"
+    code_folding: 'show'
+  pdf_document:
+    toc: true
+---
+<style>
+body {
+    font-size: 18px; /* Change the value to adjust the font size */
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+<div style="height: 40px;"></div>
+
+<img src="Images/logo.png" alt="Logo" style="float: left; width: 300px; margin-right: 10px;">
+
+<div style="height: 120px;"></div>
+
+
+# <span style="color: #50677D;"> Research objectives</span>
+
+## <span style="color: #007BB9;">Question 1</span>
+*<span style="color: #007BB9;">What are the contributions of this study ?</span>*
+
+Write a brief summary (no more than 1.5 pages) that discusses the contributions of this study. You might wish to consider the following questions: What are the objectives, and how do they relate to the established literature? What is novel about the empirical strategy? What are the results and how convincing are these?
+
+**Answer 1: **
+This paper studies how changes that make unemployment systems more generous affect the duration of unemployment. 
+A considerable theoretical literature has shown that a more generous unemployment insurance system (through a higher RR and/or a longer PBD) will reduce the optimal job search effort of an unemployed worker and hence result in longer unemployment duration.
+That is also  confirmed by the predictions of job search theory, which states, among other things, that as the duration of unemployment increases, individuals may lower their reservation wage due to financial pressures and the desire to avoid long-term unemployment. If these pressures are relieved by increasing the RR and/or the PBD, it is understandable that the duration of unemployment may increase. About the job search theory there have been many studies in the last decade. 
+
+In this study, as I anticipated, Lalive, van Ours, and Zweimüller investigate how changes in financial incentives, specifically the benefit replacement rate (RR) and potential benefit duration (PBD) of unemployment insurance, impact the duration of unemployment. The objectives of the study are to understand the effects of these key parameters on unemployment duration and to provide insights for policymakers on designing effective unemployment insurance policies.
+
+The study contributes to the existing literature by focusing on the interplay between RR and PBD, which is a relatively understudied area. While previous research has examined the individual effects of RR or PBD changes on unemployment behavior, this study uniquely explores the combined impact of these parameters. By analyzing data from Austria, the authors are able to leverage a natural experiment that occurred in the late 1980s, providing a valuable opportunity to assess the effects of simultaneous changes in RR and PBD.
+
+One of the key novelties of the empirical strategy is the use of longitudinal individual data from Austrian social security databases, allowing for a detailed analysis of unemployment spells and transitions. The study carefully constructs groups of job seekers based on income, age, and work experience criteria to isolate the effects of RR and PBD changes. This meticulous approach enhances the credibility of the results and strengthens the internal validity of the study.
+
+The results of the study reveal several important findings. The authors find that increases in PBD have a more substantial impact on unemployment duration compared to changes in RR. Older workers exhibit stronger reactions to PBD extensions, highlighting the importance of considering age-related differences in policy design. The study also demonstrates that the combined effect of simultaneous changes in RR and PBD differs from the sum of individual effects, suggesting potential interaction effects between these parameters.
+
+Overall, the results of the study are robust and provide valuable insights for policymakers. The findings underscore the significance of PBD in influencing unemployment behavior and suggest that adjusting the potential duration of benefits may be a more effective policy tool than altering benefit levels. By shedding light on the relative importance of RR and PBD in shaping unemployment outcomes, this study offers practical implications for designing efficient unemployment insurance systems.
+
+
+
+# <span style="color: #50677D;"> Data Preparation</span>
+
+
+### Loading data
+
+We begin with some preliminary steps, loading the libraries and the data
+
+
+```{r, warning=FALSE, message=FALSE}
+# Libraries loading
+library(foreign)
+library(survival)
+library(tidyverse)
+library(dplyr)
+library(survminer)
+library(gt)
+```
+
+
+Then we check for the dimension of our dataset and for the presence of NA's.
+
+```{r, warning=FALSE}
+# Data loading
+
+udat <- read.dta("fi.dta")  
+udat <- udat[,1:134] ## get rid of some superfluous variables
+udat <- as_tibble(udat)
+
+dim(udat)
+```
+
+```{r}
+sum(is.na(udat))
+```
+
+
+```{r}
+# Data Visualization
+
+glimpse(udat[,1:36])
+#head(data)
+#summary(data)
+```
+
+This dataset contains many attributes, some of the most important are:
+
+  - *<span style="color: #007BB9;">type</span>* : factor variable that defines the groups
+  - *<span style="color: #007BB9;">dur</span>*: the duration of unemployment spell (weeks)
+  - *<span style="color: #007BB9;">uncc</span>*: variable that assumes the value 1 if spell not censored, 0 otherwise
+  - *<span style="color: #007BB9;">after</span>*: variable that assumes the value 1 if spell starts after Aug 1, 1989
+  
+Here you can find a more in-depth list of the variables used and what they represent:
+
+
+<img src="Images/Variables.png" alt="List of variables" style="width: 370px; margin-right: 10px;">
+
+
+
+
+```{r}
+table(udat$type)
+```
+
+```{r}
+summary(udat$dur)
+```
+
+
+```{r}
+## Computation of average spells when durations are truncated at 104 weeks
+udat %>%
+  mutate(dur104 = dur,
+         dur104 = ifelse(dur104 > 104, 104, dur104)) ->
+  udat
+```
+
+
+
+# <span style="color: #50677D;"> Difference-in-Differences</span> 
+
+
+
+## <span style="color: #007BB9;">Question 2</span> {.tabset}
+*<span style="color: #007BB9;">(difference-in-differences) Attempt to replicate Table 4 of the paper:</span>*
+
+
+![Table 4 from the paper](Images/Table 4.png)
+
+
+**Answer 2: **
+
+### BASIC STEP BY STEP:
+
+```{r}
+basic = udat %>%
+  group_by(type, after) %>%
+  summarize(mean = round(mean(dur104),2),
+            n = n(),
+            se =  round((sd(dur104) / sqrt(n)),2))
+basic
+```
+
+
+
+### PIVOTING:
+
+```{r}
+diff_in_diff <- udat %>%
+  group_by(type, after) %>%
+  summarize(mean_outcome = mean(dur104),
+            n_obs = n(),
+            se_outcome =  sd(dur104) / sqrt(n_obs)) %>%
+  pivot_wider(names_from = after, values_from = c(mean_outcome, se_outcome, n_obs)) %>%
+  mutate(change_mean = `mean_outcome_1` - `mean_outcome_0`, change_se = `se_outcome_1` - `se_outcome_0`)
+
+diff_in_diff = diff_in_diff %>%
+  mutate(DiD_mean = change_mean - as.double(diff_in_diff[4,8]))
+#print(diff_in_diff)
+```
+
+
+
+```{r}
+diff_in_diff1 <- data.frame(
+  Group = levels(udat$type),
+  before_mean = diff_in_diff$mean_outcome_0,
+  before_se = diff_in_diff$se_outcome_0,
+  before_n = diff_in_diff$n_obs_0,
+  after_mean = diff_in_diff$mean_outcome_1,
+  after_se = diff_in_diff$se_outcome_1,
+  after_n = diff_in_diff$n_obs_1,
+  change_mean= diff_in_diff$change_mean,
+  change_se= diff_in_diff$change_se,
+  DiD_mean= diff_in_diff$DiD_mean
+)
+
+knitr::kable(diff_in_diff1, align = "c", digits = 2, caption = "My Table for DiD")
+
+
+```
+### REGRESSION:
+
+```{r}
+levels(udat$type)
+udat$type <- relevel(udat$type, ref = "control")
+levels(udat$type)
+```
+
+
+```{r}
+lm1=lm(dur104~type+after, data=udat) 
+summary(lm1)
+coef(lm1)[3:4] + coef(lm1)[1] 
+coef(lm1)[3:4] + coef(lm1)[1] + coef(lm1)["after"]
+```
+A small note regarding this point: in the solutions proposed by the teacher the same result comes out as this model, which I imagine is the model used. However, perhaps it would be more accurate to add an interaction term between type and after: in this case the model would look like this:
+
+```{r}
+lm2=lm(dur104~type*after, data=udat) 
+summary(lm2)
+```
+
+Another way to obtain the coefficient would be to suppress the constant of the linear model:
+
+
+```{r}
+lm2=lm(dur104~type+after- 1, data=udat) 
+summary(lm2)
+coef(lm2)[3:4] 
+coef(lm2)[3:4] + coef(lm2)["after"]
+```
+
+
+# <span style="color: #50677D;"> Survival Function</span>
+
+
+## <span style="color: #007BB9;">Question 3</span>
+*<span style="color: #007BB9;">(Survival Functions) Seek to reproduce Figure 3 in Lalive et al. (2006).</span>*
+
+
+<img src="Images/Figure 3.png" alt="Alt text" width="500" height="500" align="center" />
+
+**Answer 3: **
+
+```{r echo=FALSE}
+#levels(udat$type)
+new_levels <- c("PBD", "RR", "PBD and RR", "control")
+udat$type <- factor(udat$type, levels = new_levels)
+#levels(udat$type)
+```
+
+
+```{r message=FALSE}
+line_type=c("dashed", "dashed", "dashed", "dashed","solid", "solid","solid","solid")
+
+kmcurve <- survfit(Surv(dur104, uncc) ~ after, data = udat)
+
+ggsurvplot(kmcurve,
+           ggtheme = theme_minimal(),
+           linetype = line_type,
+           censor.size = 0.1,
+           size = 0.5,
+           palette = c("#007BB9", "#50677D"),
+           legend.labs = c("Before 1989", "After 1989"),
+           facet.by = "type") +
+  guides(linetype = 'none') +
+  labs(
+    x = "Unemployment duration (weeks)",
+    y = "survival probability",
+    subtitle = "Kaplan-Meier survivor functions"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.subtitle = element_text(
+      size = 16L,
+      hjust = 0.5
+    ),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  ) +
+
+  scale_color_manual(values = c("#007BB9", "#50677D"), labels = c("Before 1989", "After 1989")) +
+  facet_wrap(vars(type)) 
+
+
+```
+
+
+
+
+
+
+# <span style="color: #50677D;"> KM estimates of the unemployment exit hazard</span>
+
+
+## <span style="color: #007BB9;">Question 4</span>
+*<span style="color: #007BB9;">(Survival Functions) Seek to reproduce Figure 4 in Lalive et al. (2006).</span>*
+
+![Figure 4 from the paper Lalive et al. (2006)](Images/Figure 4.png) 
+
+
+**Answer 4: **
+
+
+```{r message=FALSE, warning=FALSE}
+library(muhaz)
+library(biostat3)
+library(bshazard)
+
+hazards <- udat %>%
+  group_by(type, after) %>%
+  do(as.data.frame.muhaz(muhaz(.$dur104, .$uncc, min.time = 0, max.time = 104, bw.method = "global", b.cor = "none"))) %>%
+  ungroup()
+```
+
+
+```{r warning=FALSE}
+
+plot1=ggplot(hazards) +
+  aes(x = x, y = y, group = factor(after)) +
+  geom_line(aes(linetype = factor(after), color = factor(after)), linewidth = 0.8) +
+  scale_linetype_manual(values = c("dashed", "solid")) +
+  scale_color_manual(values = c( "#007BB9", "#50677D"),labels = c("Before 1989", "After 1989")) +
+  labs(
+    x = "Unemployment duration (weeks)",
+    y = "Hazard",
+    subtitle = "Kaplan–Meier unemployment exit rates",
+    color = element_blank(),
+    linetype = element_blank()
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.subtitle = element_text(
+      size = 16L,
+      hjust = 0.5
+    ),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  ) +
+  facet_wrap(vars(type)) +
+  xlim(0, 100) +
+  ylim(0, 0.15)+
+  guides(linetype = FALSE)
+
+plot(plot1) 
+```
+
+
+As we can see, the function presents some jumps and, although it exhibits similar results, it does not fully reflect Figure 4 of the paper, which means that we can still make a small correction: in fact, when we truncate the duration variable *<span style="color: #007BB9;">dur</span>*, creating *<span style="color: #007BB9;">dur104</span>*, the uncensored variable *<span style="color: #007BB9;">uncc</span>* should also be updated, as it must take into account the truncation we are introducing into the data. If we make this correction we obtain:
+
+
+```{r warning=FALSE}
+table_before=as.data.frame(table(udat$uncc))
+
+table_before %>%
+  tibble::as_tibble() %>%
+  gt::gt() %>%
+  gt::tab_header(
+    title = "Variable uncc BEFORE updating")
+```
+
+
+```{r}
+udat$uncc=(ifelse(udat$dur>104, 0, udat$uncc))
+```
+
+
+
+```{r}
+table_after=as.data.frame(table(udat$uncc))
+
+table_after %>%
+  tibble::as_tibble() %>%
+  gt::gt() %>%
+  gt::tab_header(
+    title = "Variable uncc AFTER updating")
+```
+
+
+
+Let's redo question 4 with this corrected version of the dataset:
+In this case we obtain a result that is more similar to the one in the paper, because now the variable *<span style="color: #007BB9;">uncc</span>* is updated taking into consideration the truncation made on *<span style="color: #007BB9;">dur</span>* (we are using, in fact, *<span style="color: #007BB9;">dur104</span>*). 
+We can notice that we don't have anymore the 'jumps', but the function is now continuous and well defined across the entire domain.
+
+
+```{r message=FALSE, warning=FALSE}
+
+hazards <- udat %>%
+  group_by(type, after) %>%
+  do(as.data.frame.muhaz(muhaz(.$dur104, .$uncc, min.time = 0,max.time=104, bw.method = "global", b.cor = "none"))) %>%
+  ungroup()
+```
+
+
+```{r warning=FALSE}
+
+plot2=ggplot(hazards) +
+  aes(x = x, y = y, group = factor(after)) +
+  geom_line(aes(linetype = factor(after), color = factor(after)), linewidth = 0.8) +
+  scale_linetype_manual(values = c("dashed", "solid")) +
+  scale_color_manual(values = c( "#007BB9", "#50677D"),labels = c("Before 1989", "After 1989")) +
+  labs(
+    x = "Unemployment duration (weeks)",
+    y = "Hazard",
+    #title = "Figure 4",
+    subtitle = "Kaplan–Meier unemployment exit rates",
+    color = element_blank(),
+    linetype = element_blank()
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    plot.subtitle = element_text(
+      size = 16L,
+      hjust = 0.5
+    ),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  ) +
+  facet_wrap(vars(type)) +
+  xlim(0, 100) +
+  ylim(0, 0.15)+
+  guides(linetype = FALSE)
+  
+plot(plot2)
+```
+
+<div style="height: 40px;"></div>
+
+
+To better visualize the difference between these plots, I compare them with each other:
+
+
+<div style="height: 40px;"></div>
+
+
+
+<!--HTML markup to create a row with three columns-->
+<div style="display: flex; flex-direction: row;">
+
+<!--First column-->
+<div style="flex: 2;">
+  ![](Images/Figure 4.png)
+</div>
+
+<!--Second column-->
+<div style="flex: 2;">
+  ![](Images/Before.png)
+</div>
+
+<!--Third column-->
+<div style="flex: 2;">
+  ![](Images/After.png)
+</div>
+
+</div>
+
+
+# <span style="color: #50677D;"> Estimating the causal treatment effect in a PH model</span>
+
+
+## <span style="color: #007BB9;">Question 5</span>
+*<span style="color: #007BB9;">Estimate the causal treatment effect in a PH model.</span>*
+
+
+**Answer 5: **
+
+```{r}
+udat %>%
+  mutate(all = tr * (t39 + t52) ) ->
+  udat
+
+breaks <- seq(from=3,to=59, by=4)
+labels <- paste("(", c(0,breaks), ",", c(breaks,104), "]",sep="")
+
+gux <- survSplit(Surv(dur104,uncc) ~., data=udat, cut = breaks,
+                 end = "time", event="death", start="start", episode="interval")
+
+gux %>%
+  mutate(exposure = time - start,
+        interval=factor(interval+1, labels = labels) ) ->
+  gux
+```
+
+
+```{r }
+pwe <- coxph(Surv(exposure, death) ~ interval + age + factor(single) + factor(married) + factor(divorced) + factor(sfrau) + factor(f_marr) + factor(f_single) + factor(f_divor) + factor(lehre) + factor(med_educ) + factor(hi_educ) + nwage_pj + factor(bc) + lwage + ten72 + pnon_10 + factor(seasonal) + factor(manuf) + factor(y1988) + factor(y1989) + factor(y1990) + factor(y1991) + factor(q2) + factor(q3) + factor(q4) + interval:tr + interval:t39 + interval:t52 + interval:all + interval:after0 + interval:tr_a0 + interval:t39_a0 + interval:t52_a0 + interval:t39tra0 + interval:t52tra0, data = gux)
+```
+
+
+```{r }
+library(stargazer)
+
+stargazer(pwe, 
+          dep.var.caption="",dep.var.labels="",
+          keep=1:15,
+          omit.table.layout = "n", star.cutoffs = NA,
+          keep.stat=c("n", "ll"),no.space=TRUE,
+          header=FALSE,
+          title="The PWE model", type="text"
+          )
+```
+
+Comparing the coefficients of all the variables (just by commenting 'keep=1:15'), we can see that they are very similar to those obtained in the paper.
+
+
+# <span style="color: #50677D;"> Final remarks</span>
+
+Having reached this point we conclude the work with some final considerations on the work carried out. Replicating an academic paper that features data usage and does not report all the formulas and code used to obtain certain results can be very complicated and treacherous. On the one hand, in fact, there is the problem of understanding in detail what the authors are trying to do, since every slightest difference in thought and therefore in implementation can generate large differences in the final output; on the other hand, you run the risk of making imperfections related to the more practical part of writing the code, and of using different algorithms and models, once again compromising the final result.
+
+
+
